@@ -86,6 +86,9 @@ class SummaryStore:
 class GPTSummarizer:
     """Wrapper around the GPT API for chunked report summarization."""
 
+    def __init__(self, api_key: str, model: str = "gpt-4o-mini"):
+        self._client = OpenAI(api_key=api_key)
+        self._model = model
 
     async def summarize_chunk(self, text: str) -> str:
         prompt = (
@@ -140,7 +143,15 @@ async def get_summarizer(settings: Settings = Depends(get_settings)) -> GPTSumma
     if _summarizer_instance is None:
         with _summarizer_lock:
             if _summarizer_instance is None:
-                _summarizer_instance = GPTSummarizer(settings)
+                if not settings.openai_api_key:
+                    raise HTTPException(
+                        status_code=500, 
+                        detail="OpenAI API key not configured. Please set OPENAI_API_KEY environment variable."
+                    )
+                _summarizer_instance = GPTSummarizer(
+                    api_key=settings.openai_api_key, 
+                    model=settings.openai_model
+                )
     return _summarizer_instance
 
 
