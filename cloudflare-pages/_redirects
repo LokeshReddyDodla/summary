@@ -1,0 +1,9 @@
+# Redirect API calls to Railway backend
+/api/* https://summary-production-0277.up.railway.app/:splat 200
+/summarize-report https://summary-production-0277.up.railway.app/summarize-report 200
+/download-summary/* https://summary-production-0277.up.railway.app/download-summary/:splat 200
+/docs https://summary-production-0277.up.railway.app/docs 200
+/openapi.json https://summary-production-0277.up.railway.app/openapi.json 200
+
+# Fallback for SPA
+/* /index.html 200
