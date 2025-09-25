@@ -352,7 +352,7 @@ async def download_summary(token: str) -> Response:
 
 
 @app.get("/")
-async def root() -> Dict[str, str]:
+async def root():
     return {
         "message": "Report Summarization Bot API",
         "status": "running",
