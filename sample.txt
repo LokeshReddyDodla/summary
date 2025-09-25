@@ -1,0 +1,3 @@
+This is a sample document for testing the summarization API.
+It contains some content that can be processed by the OpenAI GPT model.
+The API will extract text, chunk it, and generate a summary.

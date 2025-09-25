@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Report Summarization Bot</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 2rem auto;
+        max-width: 720px;
+        line-height: 1.5;
+        color: #222;
+      }
+      h1 {
+        margin-bottom: 0.5rem;
+      }
+      form {
+        border: 1px solid #ccc;
+        padding: 1.5rem;
+        border-radius: 8px;
+        background-color: #fafafa;
+      }
+      input[type="file"] {
+        margin-bottom: 1rem;
+      }
+      button {
+        background-color: #2563eb;
+        color: white;
+        border: none;
+        padding: 0.6rem 1.2rem;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      button:disabled {
+        background-color: #9ca3af;
+        cursor: not-allowed;
+      }
+      .secondary {
+        background-color: #e5e7eb;
+        color: #1f2937;
+      }
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-top: 0.75rem;
+      }
+      .file-list {
+        margin-top: 0.75rem;
+        border: 1px dashed #cbd5f5;
+        padding: 0.75rem 1rem;
+        border-radius: 6px;
+        background-color: #f8fafc;
+      }
+      .file-list ul {
+        margin: 0.5rem 0 0;
+        padding-left: 1.1rem;
+        list-style: disc;
+      }
+      .file-list li {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin: 0.35rem 0;
+        position: relative;
+        padding-left: 0.75rem;
+      }
+      .file-list li::before {
+        content: '•';
+        position: absolute;
+        left: -0.75rem;
+        color: #1f2937;
+      }
+      .file-list .file-info {
+        flex: 1;
+        display: flex;
+        flex-wrap: wrap;
+        column-gap: 0.5rem;
+        row-gap: 0.25rem;
+      }
+      .file-list .filename {
+        font-weight: 600;
+      }
+      .file-list .filesize {
+        color: #475569;
+      }
+      .file-list button.delete {
+        background-color: #fee2e2;
+        color: #b91c1c;
+        border: 1px solid #fca5a5;
+        padding: 0.15rem 0.4rem;
+        cursor: pointer;
+        font-size: 0.8rem;
+        border-radius: 4px;
+        line-height: 1;
+        margin-left: 0.5rem;
+      }
+      .file-list button.delete:hover {
+        background-color: #fecaca;
+      }
+      .file-list .empty {
+        margin: 0;
+        color: #6b7280;
+      }
+      .file-list .meta {
+        margin: 0;
+        font-weight: 600;
+      }
+      .summary-box {
+        white-space: pre-wrap;
+        word-break: break-word;
+        background-color: #f4f4f4;
+        padding: 1rem;
+        border-radius: 4px;
+        border: 1px solid #ddd;
+      }
+      .summary-box h1,
+      .summary-box h2,
+      .summary-box h3,
+      .summary-box h4,
+      .summary-box h5,
+      .summary-box h6 {
+        margin: 0 0 0.5rem;
+        font-weight: 700;
+      }
+      .summary-box strong {
+        font-weight: 700;
+      }
+      .hidden {
+        display: none;
+      }
+      .error {
+        color: #b91c1c;
+      }
+      .success {
+        color: #047857;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Report Summarization Bot</h1>
+    <p>Select up to five PDF, DOCX, or TXT files to generate a combined summary.</p>
+    <form id="upload-form">
+      <label>
+        API base URL
+        <input
+          id="api-base"
+          type="text"
+          value="http://127.0.0.1:8000"
+          style="width: 100%; margin: 0.5rem 0 1rem;"
+          required
+        />
+      </label>
+      <input id="files" name="files" type="file" multiple accept=".pdf,.docx,.txt" />
+      <div id="file-list" class="file-list hidden"></div>
+      <div class="actions">
+        <button id="clear" type="button" class="secondary">Clear files</button>
+        <button id="submit" type="submit">Summarize</button>
+      </div>
+    </form>
+
+    <section id="status" class="hidden"></section>
+    <section id="summary" class="hidden">
+      <h2>Summary</h2>
+      <div id="summary-text" class="summary-box"></div>
+      <p>
+        <a id="download-link" href="#" download>Download summary (.txt)</a>
+      </p>
+    </section>
+
+    <script>
+      const form = document.getElementById('upload-form');
+      const submitButton = document.getElementById('submit');
+      const clearButton = document.getElementById('clear');
+      const statusBox = document.getElementById('status');
+      const apiBaseInput = document.getElementById('api-base');
+      const summarySection = document.getElementById('summary');
+      const summaryText = document.getElementById('summary-text');
+      const downloadLink = document.getElementById('download-link');
+      const filesInput = document.getElementById('files');
+      const fileList = document.getElementById('file-list');
+      let queuedFiles = [];
+
+      function escapeHtml(text) {
+        return text
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function renderSummaryMarkup(rawText) {
+        if (!rawText) {
+          return '';
+        }
+        let html = escapeHtml(rawText).replace(/\r\n/g, '\n');
+
+        const headingPatterns = [
+          { regex: /^######\s(.+)$/gm, tag: 'h6' },
+          { regex: /^#####\s(.+)$/gm, tag: 'h5' },
+          { regex: /^####\s(.+)$/gm, tag: 'h4' },
+          { regex: /^###\s(.+)$/gm, tag: 'h3' },
+          { regex: /^##\s(.+)$/gm, tag: 'h2' },
+          { regex: /^#\s(.+)$/gm, tag: 'h1' },
+        ];
+
+        headingPatterns.forEach(({ regex, tag }) => {
+          html = html.replace(regex, `<${tag}>$1</${tag}>`);
+        });
+
+        html = html
+          .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+          .replace(/__(.+?)__/g, '<strong>$1</strong>');
+
+        html = html.replace(/\n{3,}/g, '\n\n');
+        html = html.replace(/\n/g, '<br />');
+        html = html.replace(/(<\/h[1-6]>)<br \/>/g, '$1');
+
+        return html;
+      }
+
+      function setStatus(message, isError = false) {
+        statusBox.textContent = message;
+        statusBox.className = isError ? 'error' : 'success';
+        statusBox.classList.remove('hidden');
+      }
+
+      function renderFileList() {
+        if (!queuedFiles.length) {
+          fileList.innerHTML = '<p class="empty">No files selected.</p>';
+          fileList.classList.add('hidden');
+          return;
+        }
+        fileList.innerHTML = `
+          <p class="meta">Selected ${queuedFiles.length} file(s)</p>
+          <ul>
+            ${queuedFiles
+              .map(
+                (file, index) => `
+                  <li>
+                    <div class="file-info">
+                      <span class="filename">${file.name}</span>
+                      <span class="filesize">${(file.size / 1024).toFixed(1)} KB</span>
+                      <button type="button" class="delete" data-index="${index}">✕</button>
+                    </div>
+                  </li>
+                `,
+              )
+              .join('')}
+          </ul>
+        `;
+        fileList.classList.remove('hidden');
+        fileList.querySelectorAll('button.delete').forEach((button) => {
+          button.addEventListener('click', (event) => {
+            const element = event.currentTarget;
+            if (!(element instanceof HTMLElement)) {
+              return;
+            }
+            const index = Number(element.getAttribute('data-index'));
+            if (!Number.isNaN(index)) {
+              queuedFiles.splice(index, 1);
+              renderFileList();
+              if (!queuedFiles.length) {
+                statusBox.classList.add('hidden');
+              }
+            }
+          });
+        });
+      }
+
+      function handleFileSelection(event) {
+        const files = Array.from(event.target.files || []);
+        if (!files.length) {
+          return;
+        }
+
+        let added = 0;
+        for (const file of files) {
+          const exists = queuedFiles.some(
+            (item) =>
+              item.name === file.name &&
+              item.size === file.size &&
+              item.lastModified === file.lastModified,
+          );
+          if (exists) {
+            continue;
+          }
+          if (queuedFiles.length >= 5) {
+            setStatus('Maximum of five documents per request.', true);
+            break;
+          }
+          queuedFiles.push(file);
+          added += 1;
+        }
+
+        if (added === 0 && queuedFiles.length >= 5) {
+          setStatus('Maximum of five documents per request.', true);
+        } else if (added > 0) {
+          statusBox.classList.add('hidden');
+        }
+
+        renderFileList();
+        filesInput.value = '';
+      }
+
+      function clearFiles() {
+        queuedFiles = [];
+        renderFileList();
+      }
+
+      renderFileList();
+
+      filesInput.addEventListener('change', handleFileSelection);
+      clearButton.addEventListener('click', clearFiles);
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        statusBox.classList.add('hidden');
+        summarySection.classList.add('hidden');
+        summaryText.innerHTML = '';
+
+        if (!queuedFiles.length) {
+          setStatus('Please choose at least one file.', true);
+          return;
+        }
+
+        const formData = new FormData();
+        queuedFiles.forEach((file) => formData.append('files', file));
+
+        const apiBase = apiBaseInput.value.replace(/\/$/, '');
+
+        submitButton.disabled = true;
+        clearButton.disabled = true;
+        setStatus('Summarizing...', false);
+
+        try {
+          const response = await fetch(`${apiBase}/summarize-report`, {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (!response.ok) {
+            const errorPayload = await response.json().catch(() => ({ detail: 'Unexpected error' }));
+            throw new Error(errorPayload.detail || 'Request failed');
+          }
+
+          const data = await response.json();
+          summaryText.innerHTML = renderSummaryMarkup(data.summary);
+          downloadLink.href = `${apiBase}/download-summary/${data.download_token}`;
+          downloadLink.setAttribute('download', `summary-${data.download_token}.txt`);
+
+          summarySection.classList.remove('hidden');
+          setStatus(data.message || 'Summary generated successfully.');
+        } catch (err) {
+          setStatus(err.message || 'Unable to generate summary.', true);
+        } finally {
+          submitButton.disabled = false;
+          clearButton.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>

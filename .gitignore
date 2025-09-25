@@ -1,0 +1,38 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Environment files
+.env
+.env.*
+
+# MacOS metadata
+.DS_Store
+
+# Logs
+*.log
+
+# Byte-compiled / temporary
+*.swp
+*.swo
+
+# Node/Flutter build artifacts
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.dart_tool/
+.packages
+
+# Virtual environments
+.venv/
+venv/
+
+# Coverage reports
+htmlcov/
+.coverage*
+
+# IDE specific
+.idea/
+.vscode/
+

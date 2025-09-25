@@ -1,0 +1,18 @@
+This is a test document for the summarization service.
+
+The purpose of this document is to test the file upload and processing functionality of the FastAPI application.
+
+The application should be able to:
+1. Accept file uploads via HTTP POST requests
+2. Extract text from various file formats (PDF, DOCX, TXT)
+3. Process and chunk the text appropriately
+4. Generate summaries using OpenAI's GPT models
+5. Return the summary along with a download token
+
+This test document contains multiple paragraphs and should provide enough content for the summarization algorithm to work with.
+
+The system uses chunking to handle large documents by breaking them into smaller pieces, summarizing each chunk, and then combining the summaries into a final coherent report.
+
+Environment variables are loaded from a .env file using python-dotenv, and the OpenAI API key must be properly configured for the service to function.
+
+The FastAPI application includes CORS middleware to allow cross-origin requests, and serves static files for the frontend interface.
