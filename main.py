@@ -27,10 +27,19 @@ load_dotenv()  # Load environment variables from a .env file if present.
 
 app = FastAPI(title="Report Summarization Bot", version="1.0.0")
 
+# CORS middleware with production-ready settings
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:8080",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8080",
+        "https://summary.lokeshreddydodla.workers.dev",
+        "*",  # Allow all origins for development - restrict in production
+    ],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -341,6 +350,19 @@ async def download_summary(token: str) -> Response:
     }
     return Response(content=summary_text, media_type="text/plain", headers=headers)
 
+
+@app.get("/")
+async def root() -> Dict[str, str]:
+    return {
+        "message": "Report Summarization Bot API",
+        "status": "running",
+        "endpoints": {
+            "health": "/health",
+            "docs": "/docs",
+            "summarize": "/summarize-report",
+            "web_client": "/static/test-client.html"
+        }
+    }
 
 @app.get("/health")
 async def health() -> Dict[str, str]:
