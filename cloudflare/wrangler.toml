@@ -1,0 +1,18 @@
+name = "report-summarization-bot"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+[build]
+command = "echo 'No build step required'"
+
+# Environment variables (set these in Cloudflare dashboard)
+# RAILWAY_URL = "https://your-railway-app-url.up.railway.app"
+
+# Route configuration - adjust domain as needed
+routes = [
+  { pattern = "summary.yourdomain.com", zone_name = "yourdomain.com" }
+]
+
+# Optional: Enable caching for static assets
+[build.upload]
+format = "service-worker"
