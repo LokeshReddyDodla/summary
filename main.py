@@ -22,9 +22,7 @@ from PyPDF2 import PdfReader
 from PyPDF2.errors import PdfReadError
 from docx import Document
 from docx.opc.exceptions import PackageNotFoundError
-import pytesseract
-from PIL import Image
-import io
+import base64
 
 load_dotenv()  # Load environment variables from a .env file if present.
 
@@ -109,6 +107,16 @@ class GPTSummarizer:
         )
         return await self._complete(prompt)
 
+    async def summarize_image(self, image_base64: str, mime_type: str) -> str:
+        """Summarize an image directly using GPT-4o vision capabilities."""
+        prompt = (
+            "Please analyze this image and provide a detailed summary. "
+            "Extract all readable text, describe any charts/graphs/tables, "
+            "and provide key insights from the visual content. "
+            "Format your response with clear key points and a concise narrative."
+        )
+        return await self._complete_with_image(prompt, image_base64, mime_type)
+
     async def _complete(self, prompt: str) -> str:
         def _call_openai() -> str:
             completion = self._client.chat.completions.create(
@@ -133,6 +141,49 @@ class GPTSummarizer:
             raise HTTPException(
                 status_code=502,
                 detail="Unable to generate summary via GPT at this time. Please try again later.",
+            ) from exc
+
+    async def _complete_with_image(self, prompt: str, image_base64: str, mime_type: str) -> str:
+        """Complete a prompt with an image using GPT-4o vision."""
+        def _call_openai_vision() -> str:
+            # Use GPT-4o for vision capabilities (it has better vision than gpt-4o-mini)
+            vision_model = "gpt-4o" if self._model == "gpt-4o-mini" else self._model
+
+            completion = self._client.chat.completions.create(
+                model=vision_model,
+                temperature=0.3,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a world-class assistant that analyzes images and documents. "
+                            "You excel at extracting text from images, interpreting charts and graphs, "
+                            "and providing insightful summaries of visual content."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{mime_type};base64,{image_base64}",
+                                    "detail": "high"  # Use high detail for better accuracy
+                                }
+                            }
+                        ]
+                    },
+                ],
+            )
+            return completion.choices[0].message.content.strip()
+
+        try:
+            return await asyncio.to_thread(_call_openai_vision)
+        except OpenAIError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail="Unable to analyze image via GPT Vision at this time. Please try again later.",
             ) from exc
 
 
@@ -258,28 +309,31 @@ def extract_text_from_txt(raw: bytes) -> str:
     return text
 
 
-def extract_text_from_image(raw: bytes) -> str:
+def encode_image_to_base64(raw: bytes, mime_type: str) -> str:
+    """Encode image bytes to base64 string for GPT Vision API."""
     try:
-        # Open image from bytes
-        image = Image.open(io.BytesIO(raw))
-
-        # Convert to RGB if necessary (some formats like PNG with transparency)
-        if image.mode not in ('L', 'RGB'):
-            image = image.convert('RGB')
-
-        # Extract text using pytesseract OCR
-        text = pytesseract.image_to_string(image)
-
-        # Clean up the extracted text
-        text = text.strip()
-
-        if not text:
-            raise ValueError("No text could be extracted from the image. Please ensure the image contains readable text.")
-
-        return text
-
+        # Encode the image bytes to base64
+        encoded = base64.b64encode(raw).decode('utf-8')
+        return encoded
     except Exception as exc:
-        raise ValueError("Failed to extract text from image. Please ensure the image is valid and contains readable text.") from exc
+        raise ValueError("Failed to encode image. Please ensure the image file is valid.") from exc
+
+
+def get_mime_type_from_filename(filename: str) -> str:
+    """Get MIME type from filename extension."""
+    ext = filename.lower().rsplit(".", 1)
+    if len(ext) == 2:
+        ext = ext[-1]
+        mime_types = {
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "png": "image/png",
+            "bmp": "image/bmp",
+            "tiff": "image/tiff",
+            "tif": "image/tiff"
+        }
+        return mime_types.get(ext, "image/jpeg")  # default to jpeg
+    return "image/jpeg"
 
 
 def normalize_text(text: str) -> str:
@@ -330,7 +384,7 @@ def chunk_text(text: str, max_tokens: int, overlap: int) -> List[str]:
 
 @app.post("/summarize-report")
 async def summarize_report(
-    files: List[UploadFile] = FastAPIFile(..., description="Upload up to 5 documents (PDF, DOCX, TXT, JPG, JPEG, PNG, BMP, TIFF) for summarization. Text will be extracted from images using OCR."),
+    files: List[UploadFile] = FastAPIFile(..., description="Upload up to 5 documents (PDF, DOCX, TXT, JPG, JPEG, PNG, BMP, TIFF) for summarization. Images will be analyzed directly using GPT-4o Vision."),
     summarizer: GPTSummarizer = Depends(get_summarizer),
     settings: Settings = Depends(get_settings),
 ) -> JSONResponse:
@@ -339,41 +393,65 @@ async def summarize_report(
     if len(files) > 5:
         raise HTTPException(status_code=400, detail="You can upload a maximum of 5 documents at once.")
 
-    extracted_texts: List[str] = []
+    text_summaries: List[str] = []
+    image_summaries: List[str] = []
+
     for upload in files:
         try:
             file_kind = detect_file_kind(upload)
             raw = await read_upload(upload)
-            extracted = extract_text(file_kind, raw)
-            normalized = normalize_text(extracted)
-            if not normalized:
-                raise ValueError("The document does not contain any usable text after preprocessing.")
-            extracted_texts.append(normalized)
+
+            if file_kind == "image":
+                # Process image directly with GPT Vision
+                mime_type = get_mime_type_from_filename(upload.filename or "")
+                image_base64 = encode_image_to_base64(raw, mime_type)
+                image_summary = await summarizer.summarize_image(image_base64, mime_type)
+                image_summaries.append(f"Image ({upload.filename}): {image_summary}")
+            else:
+                # Process text-based documents
+                extracted = extract_text(file_kind, raw)
+                normalized = normalize_text(extracted)
+                if not normalized:
+                    raise ValueError("The document does not contain any usable text after preprocessing.")
+
+                chunks = chunk_text(
+                    normalized,
+                    max_tokens=settings.chunk_token_limit,
+                    overlap=settings.chunk_overlap,
+                )
+
+                if not chunks:
+                    raise ValueError("The document content could not be properly chunked for summarization.")
+
+                # Summarize each chunk
+                chunk_summaries = []
+                for chunk in chunks:
+                    chunk_summary = await summarizer.summarize_chunk(chunk)
+                    chunk_summaries.append(chunk_summary)
+
+                # Combine chunk summaries if there are multiple
+                if len(chunk_summaries) == 1:
+                    text_summaries.append(f"{upload.filename}: {chunk_summaries[0]}")
+                else:
+                    combined_summary = await summarizer.summarize_overview(chunk_summaries)
+                    text_summaries.append(f"{upload.filename}: {combined_summary}")
+
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=f"{upload.filename}: {exc}") from exc
         finally:
             await upload.close()
 
-    aggregated_text = " \n ".join(extracted_texts)
+    # Combine all summaries
+    all_summaries = text_summaries + image_summaries
 
-    chunks = chunk_text(
-        aggregated_text,
-        max_tokens=settings.chunk_token_limit,
-        overlap=settings.chunk_overlap,
-    )
+    if not all_summaries:
+        raise HTTPException(status_code=400, detail="Unable to extract meaningful content from the uploaded documents.")
 
-    if not chunks:
-        raise HTTPException(status_code=400, detail="Unable to extract meaningful text from the uploaded documents.")
-
-    chunk_summaries: List[str] = []
-    for chunk in chunks:
-        chunk_summary = await summarizer.summarize_chunk(chunk)
-        chunk_summaries.append(chunk_summary)
-
-    if len(chunk_summaries) == 1:
-        final_summary = chunk_summaries[0]
+    # If we have multiple documents, create an overview summary
+    if len(all_summaries) == 1:
+        final_summary = all_summaries[0]
     else:
-        final_summary = await summarizer.summarize_overview(chunk_summaries)
+        final_summary = await summarizer.summarize_overview(all_summaries)
 
     download_token = summary_store.save(final_summary)
 
