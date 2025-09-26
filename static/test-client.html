@@ -139,7 +139,7 @@
   </head>
   <body>
     <h1>Report Summarization Bot</h1>
-    <p>Select up to five PDF, DOCX, or TXT files to generate a combined summary.</p>
+    <p>Select up to five PDF, DOCX, TXT, or image files (JPG, PNG, BMP, TIFF) to generate a combined summary. Images will be analyzed using AI vision.</p>
     <form id="upload-form">
       <label>
         API base URL
@@ -151,7 +151,7 @@
           required
         />
       </label>
-      <input id="files" name="files" type="file" multiple accept=".pdf,.docx,.txt" />
+      <input id="files" name="files" type="file" multiple accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.bmp,.tiff,.tif" />
       <div id="file-list" class="file-list hidden"></div>
       <div class="actions">
         <button id="clear" type="button" class="secondary">Clear files</button>
