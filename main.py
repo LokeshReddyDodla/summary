@@ -22,6 +22,9 @@ from PyPDF2 import PdfReader
 from PyPDF2.errors import PdfReadError
 from docx import Document
 from docx.opc.exceptions import PackageNotFoundError
+import pytesseract
+from PIL import Image
+import io
 
 load_dotenv()  # Load environment variables from a .env file if present.
 
@@ -145,7 +148,7 @@ async def get_summarizer(settings: Settings = Depends(get_settings)) -> GPTSumma
             if _summarizer_instance is None:
                 if not settings.openai_api_key:
                     raise HTTPException(
-                        status_code=500, 
+                        status_code=1001, 
                         detail="OpenAI API key not configured. Please set OPENAI_API_KEY environment variable."
                     )
                 _summarizer_instance = GPTSummarizer(
@@ -159,11 +162,21 @@ SUPPORTED_EXTENSIONS = {
     ".pdf": "pdf",
     ".docx": "docx",
     ".txt": "txt",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".png": "image",
+    ".bmp": "image",
+    ".tiff": "image",
+    ".tif": "image",
 }
 SUPPORTED_CONTENT_TYPES = {
     "application/pdf": "pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
     "text/plain": "txt",
+    "image/jpeg": "image",
+    "image/png": "image",
+    "image/bmp": "image",
+    "image/tiff": "image",
 }
 async def read_upload(upload_file: UploadFile) -> bytes:
     raw = await upload_file.read()
@@ -181,7 +194,7 @@ def detect_file_kind(upload_file: UploadFile) -> str:
     content_type = (upload_file.content_type or "").lower()
     if content_type in SUPPORTED_CONTENT_TYPES:
         return SUPPORTED_CONTENT_TYPES[content_type]
-    raise ValueError("Unsupported file format. Allowed types: PDF, DOCX, TXT.")
+    raise ValueError("Unsupported file format. Allowed types: PDF, DOCX, TXT, JPG, JPEG, PNG, BMP, TIFF.")
 
 
 def extract_text(file_kind: str, raw: bytes) -> str:
@@ -191,6 +204,8 @@ def extract_text(file_kind: str, raw: bytes) -> str:
         return extract_text_from_docx(raw)
     if file_kind == "txt":
         return extract_text_from_txt(raw)
+    if file_kind == "image":
+        return extract_text_from_image(raw)
     raise ValueError("Unsupported file format.")
 
 
@@ -243,6 +258,30 @@ def extract_text_from_txt(raw: bytes) -> str:
     return text
 
 
+def extract_text_from_image(raw: bytes) -> str:
+    try:
+        # Open image from bytes
+        image = Image.open(io.BytesIO(raw))
+
+        # Convert to RGB if necessary (some formats like PNG with transparency)
+        if image.mode not in ('L', 'RGB'):
+            image = image.convert('RGB')
+
+        # Extract text using pytesseract OCR
+        text = pytesseract.image_to_string(image)
+
+        # Clean up the extracted text
+        text = text.strip()
+
+        if not text:
+            raise ValueError("No text could be extracted from the image. Please ensure the image contains readable text.")
+
+        return text
+
+    except Exception as exc:
+        raise ValueError("Failed to extract text from image. Please ensure the image is valid and contains readable text.") from exc
+
+
 def normalize_text(text: str) -> str:
     lines = [line.strip() for line in text.splitlines()]
     cleaned_lines: List[str] = []
@@ -291,7 +330,7 @@ def chunk_text(text: str, max_tokens: int, overlap: int) -> List[str]:
 
 @app.post("/summarize-report")
 async def summarize_report(
-    files: List[UploadFile] = FastAPIFile(..., description="Upload up to 5 documents for summarization."),
+    files: List[UploadFile] = FastAPIFile(..., description="Upload up to 5 documents (PDF, DOCX, TXT, JPG, JPEG, PNG, BMP, TIFF) for summarization. Text will be extracted from images using OCR."),
     summarizer: GPTSummarizer = Depends(get_summarizer),
     settings: Settings = Depends(get_settings),
 ) -> JSONResponse:
